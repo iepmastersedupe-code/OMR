@@ -1,0 +1,224 @@
+/* Lector OMR en JavaScript puro. Mismo algoritmo que omr_reader.py, sin
+   librerias externas: tiene que correr en el navegador de un celular corriente
+   y funcionar sin internet. */
+const OMR = (() => {
+  let G = null;                       // geometria (omr_layout)
+  const setGeo = g => { G = g; };
+
+  const gris = (d, w, h) => {         // RGBA -> gris
+    const o = new Float32Array(w * h);
+    for (let i = 0, j = 0; i < o.length; i++, j += 4)
+      o[i] = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
+    return o;
+  };
+
+  const clamp = (v, lo, hi) => v < lo ? lo : (v > hi ? hi : v);
+
+  // Desenfoque de caja separable, repetido: aproxima un gaussiano y es O(n).
+  function blur(src, w, h, r, veces) {
+    let a = Float32Array.from(src), b = new Float32Array(w * h);
+    for (let v = 0; v < veces; v++) {
+      for (let y = 0; y < h; y++) {
+        const base = y * w;
+        let acc = 0;
+        for (let x = -r; x <= r; x++) acc += a[base + clamp(x, 0, w - 1)];
+        for (let x = 0; x < w; x++) {
+          b[base + x] = acc / (2 * r + 1);
+          acc -= a[base + clamp(x - r, 0, w - 1)];
+          acc += a[base + clamp(x + r + 1, 0, w - 1)];
+        }
+      }
+      for (let x = 0; x < w; x++) {
+        let acc = 0;
+        for (let y = -r; y <= r; y++) acc += b[clamp(y, 0, h - 1) * w + x];
+        for (let y = 0; y < h; y++) {
+          a[y * w + x] = acc / (2 * r + 1);
+          acc -= b[clamp(y - r, 0, h - 1) * w + x];
+          acc += b[clamp(y + r + 1, 0, h - 1) * w + x];
+        }
+      }
+    }
+    return a;
+  }
+
+  // Aplana la iluminacion dividiendo por el propio fondo. Sin esto, una sombra
+  // se come una esquina entera y la hoja no se detecta.
+  function aplanar(g, w, h) {
+    const fondo = blur(g, w, h, Math.max(2, Math.round(Math.max(w, h) / 50)), 3);
+    const o = new Float32Array(w * h);
+    for (let i = 0; i < o.length; i++)
+      o[i] = Math.min(255, (g[i] / Math.max(1, fondo[i])) * 160);
+    return o;
+  }
+
+  function otsu(g) {
+    const hist = new Int32Array(256);
+    for (let i = 0; i < g.length; i++) hist[clamp(g[i] | 0, 0, 255)]++;
+    const total = g.length;
+    let sum = 0;
+    for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sumB = 0, wB = 0, mejor = 0, umbral = 128;
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (!wB) continue;
+      const wF = total - wB;
+      if (!wF) break;
+      sumB += t * hist[t];
+      const dif = wB * wF * Math.pow(sumB / wB - (sum - sumB) / wF, 2);
+      if (dif > mejor) { mejor = dif; umbral = t; }
+    }
+    return umbral;
+  }
+
+  // Componentes conexos oscuros que parecen marca de registro: cuadrado solido.
+  function candidatas(g, w, h) {
+    const th = otsu(g);
+    const visto = new Uint8Array(w * h);
+    const pila = new Int32Array(w * h);
+    const areaMin = w * h * 0.00008, areaMax = w * h * 0.02;
+    const out = [];
+    for (let p0 = 0; p0 < visto.length; p0++) {
+      if (visto[p0] || g[p0] >= th) continue;
+      let sp = 0;
+      pila[sp++] = p0; visto[p0] = 1;
+      let n = 0, x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+      while (sp) {
+        const p = pila[--sp], x = p % w, y = (p / w) | 0;
+        n++;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+        if (x > 0 && !visto[p - 1] && g[p - 1] < th) { visto[p - 1] = 1; pila[sp++] = p - 1; }
+        if (x < w - 1 && !visto[p + 1] && g[p + 1] < th) { visto[p + 1] = 1; pila[sp++] = p + 1; }
+        if (y > 0 && !visto[p - w] && g[p - w] < th) { visto[p - w] = 1; pila[sp++] = p - w; }
+        if (y < h - 1 && !visto[p + w] && g[p + w] < th) { visto[p + w] = 1; pila[sp++] = p + w; }
+      }
+      if (n < areaMin || n > areaMax) continue;
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+      const ar = bw / bh, ext = n / (bw * bh);
+      if (ar > 0.6 && ar < 1.6 && ext > 0.80)
+        out.push([x0 + bw / 2, y0 + bh / 2]);
+    }
+    return out;
+  }
+
+  // Las 4 marcas son los blobs mas exteriores. Tolera que la hoja este girada.
+  function extremas(c) {
+    if (c.length < 4) return null;
+    let is = 0, id = 0, xs = 0, xd = 0;
+    for (let i = 1; i < c.length; i++) {
+      if (c[i][0] + c[i][1] < c[is][0] + c[is][1]) is = i;
+      if (c[i][0] + c[i][1] > c[xs][0] + c[xs][1]) xs = i;
+      if (c[i][0] - c[i][1] < c[id][0] - c[id][1]) id = i;
+      if (c[i][0] - c[i][1] > c[xd][0] - c[xd][1]) xd = i;
+    }
+    const idx = [is, xd, xs, id];               // TL, TR, BR, BL
+    if (new Set(idx).size < 4) return null;
+    return idx.map(i => c[i]);
+  }
+
+  // Homografia canonico -> imagen: se muestrea directo, sin rasterizar la hoja.
+  function homografia(dst, src) {
+    const A = [], b = [];
+    for (let i = 0; i < 4; i++) {
+      const x = dst[i][0], y = dst[i][1], u = src[i][0], v = src[i][1];
+      A.push([x, y, 1, 0, 0, 0, -x * u, -y * u]); b.push(u);
+      A.push([0, 0, 0, x, y, 1, -x * v, -y * v]); b.push(v);
+    }
+    for (let i = 0; i < 8; i++) {
+      let piv = i;
+      for (let k = i + 1; k < 8; k++) if (Math.abs(A[k][i]) > Math.abs(A[piv][i])) piv = k;
+      const ta = A[i]; A[i] = A[piv]; A[piv] = ta;
+      const tb = b[i]; b[i] = b[piv]; b[piv] = tb;
+      if (Math.abs(A[i][i]) < 1e-12) return null;
+      for (let k = i + 1; k < 8; k++) {
+        const f = A[k][i] / A[i][i];
+        for (let j = i; j < 8; j++) A[k][j] -= f * A[i][j];
+        b[k] -= f * b[i];
+      }
+    }
+    const h = new Array(8).fill(0);
+    for (let i = 7; i >= 0; i--) {
+      let s = b[i];
+      for (let j = i + 1; j < 8; j++) s -= A[i][j] * h[j];
+      h[i] = s / A[i][i];
+    }
+    h.push(1);
+    return h;
+  }
+
+  const mapear = (h, x, y) => {
+    const d = h[6] * x + h[7] * y + h[8];
+    return [(h[0] * x + h[1] * y + h[2]) / d, (h[3] * x + h[4] * y + h[5]) / d];
+  };
+
+  // Oscuridad media dentro de un disco definido en el espacio canonico.
+  function oscuridad(g, w, h, H, cx, cy, r) {
+    let s = 0, n = 0;
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r * r) continue;
+        const p = mapear(H, cx + dx, cy + dy);
+        const x = p[0] | 0, y = p[1] | 0;
+        if (x < 0 || y < 0 || x >= w || y >= h) return 0;
+        s += 255 - g[y * w + x];
+        n++;
+      }
+    return n ? s / n / 255 : 0;
+  }
+
+  function elegir(d, absTh, margen) {
+    let i0 = 0;
+    for (let i = 1; i < d.length; i++) if (d[i] > d[i0]) i0 = i;
+    let seg = -1;
+    for (let i = 0; i < d.length; i++) if (i !== i0 && d[i] > seg) seg = d[i];
+    if (d[i0] < absTh) return [-1, 'blanco'];
+    if (d[i0] - seg < margen) return [-1, 'ambiguo'];
+    return [i0, 'ok'];
+  }
+
+  /* Lee un frame RGBA. Devuelve null si no es una cartilla utilizable. */
+  function leer(data, w, h) {
+    const g0 = gris(data, w, h);
+    const intentos = [aplanar(g0, w, h), g0];
+    for (let t = 0; t < intentos.length; t++) {
+      const m = extremas(candidatas(intentos[t], w, h));
+      if (!m) continue;
+      const area = Math.abs((m[0][0] * (m[1][1] - m[3][1]) + m[1][0] * (m[2][1] - m[0][1]) +
+        m[2][0] * (m[3][1] - m[1][1]) + m[3][0] * (m[0][1] - m[2][1])) / 2);
+      if (area < 0.15 * w * h) continue;
+      const H = homografia(G.markers, m);
+      if (!H) continue;
+      // Verificacion final: las 4 marcas deben estar donde dice la geometria.
+      let ok = true;
+      for (let i = 0; i < G.markers.length; i++)
+        if (oscuridad(g0, w, h, H, G.markers[i][0], G.markers[i][1], (G.MARK >> 1) - 4) < 0.5) {
+          ok = false; break;
+        }
+      if (!ok) continue;
+
+      const answers = {}, flags = {};
+      let blancos = 0, ambiguas = 0;
+      for (const q in G.ans) {
+        const d = G.ans[q].map(c => oscuridad(g0, w, h, H, c[0], c[1], G.RM_ANS));
+        const e = elegir(d, 0.33, 0.11);
+        answers[q] = e[0] < 0 ? '' : G.LETTERS[e[0]];
+        flags[q] = e[1];
+        if (e[1] === 'blanco') blancos++;
+        if (e[1] === 'ambiguo') ambiguas++;
+      }
+      let codigo = '';
+      for (let k = 0; k < 4; k++) {
+        const col = G.code['d' + k];
+        const d = col.centers.map(c => oscuridad(g0, w, h, H, c[0], c[1], G.RM_COD));
+        const e = elegir(d, 0.33, 0.10);
+        codigo += e[0] < 0 ? '?' : col.labels[e[0]];
+      }
+      return { codigo, answers, flags, blancos, ambiguas, esquinas: m };
+    }
+    return null;
+  }
+
+  return { setGeo, leer };
+})();
