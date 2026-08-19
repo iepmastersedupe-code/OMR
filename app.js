@@ -218,6 +218,13 @@ const App = (() => {
 
   // ---- exportar ----
   function exportar() {
+    const n = Object.keys(leidas).length;
+    if (!n) {
+      // Sin esto se manda un archivo vacio y el error aparece recien en la PC.
+      pintarEstado('aviso', 'Todavía no hay nada leído',
+        'Pasa una cartilla hasta que suene y vuelve a intentarlo');
+      return;
+    }
     const cuerpo = {
       generado: new Date().toISOString(),
       preguntas: nq,
@@ -231,12 +238,17 @@ const App = (() => {
     if (navigator.share && navigator.canShare &&
         navigator.canShare({ files: [new File([txt], nombre, { type: 'application/json' })] })) {
       navigator.share({ files: [new File([txt], nombre, { type: 'application/json' })],
-                        title: nombre });
+                        title: nombre })
+        .then(() => pintarEstado('repetida', 'Enviado: ' + n + ' hoja(s)',
+                                 nombre))
+        .catch(() => { /* el usuario canceló: no es un error */ });
       return;
     }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([txt], { type: 'application/json' }));
     a.download = nombre; a.click();
+    pintarEstado('repetida', 'Descargado: ' + nombre,
+      n + ' hoja(s) · búscalo en la carpeta Descargas del teléfono');
   }
 
   function faltantes() {
