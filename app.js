@@ -311,8 +311,35 @@ const App = (() => {
       return;
     } catch (e) { /* ultimo recurso */ }
 
-    // 3) a la vista, para copiar y pegar
-    mostrarTexto(txt, nombre, n);
+    // 3) a la vista, en compacto: es lo que cabe en un mensaje
+    const c = compacto();
+    mostrarTexto(c, n + ' hoja(s) · ' + c.length + ' caracteres', n);
+  }
+
+  /* Formato COMPACTO, para mandar por WhatsApp.
+     El JSON de 40 hojas son unos 50 KB de texto: no cabe en un mensaje. Aqui
+     cada hoja es una linea de ~90 caracteres —el codigo y una letra por
+     pregunta— asi que las 148 caben de sobra. Se lee igual de bien en la PC.
+        .  = en blanco
+        ?  = dos marcas (cuenta como error)
+     Es el camino que de verdad va a usarse el dia del simulacro: el operador
+     copia y pega en el chat, sin archivos ni cables. */
+  function compacto() {
+    const L = ['MASTERS-OMR v1',
+               'fecha ' + ($('fecha').value || '?'),
+               'operador ' + ($('operador').value.trim() || '?'),
+               'preguntas ' + nq];
+    for (const cod of Object.keys(leidas).sort()) {
+      const d = leidas[cod];
+      const dud = new Set((d.dudosas || []).map(Number));
+      let linea = '';
+      for (let q = 1; q <= nq; q++) {
+        linea += dud.has(q) ? '?' : (d.respuestas[q] || d.respuestas[String(q)] || '.');
+      }
+      L.push(cod + ' ' + linea);
+    }
+    L.push('fin ' + Object.keys(leidas).length);
+    return L.join('\n');
   }
 
   /* Red de seguridad: el JSON en pantalla, seleccionable. Con esto los datos
@@ -392,11 +419,8 @@ const App = (() => {
     $('btnVer').onclick = () => {
       const n = Object.keys(leidas).length;
       if (!n) { pintarEstado('aviso', 'Todavía no hay nada leído', ''); return; }
-      mostrarTexto(JSON.stringify({
-        generado: new Date().toISOString(), preguntas: nq,
-        operador: $('operador').value.trim(),
-        fecha_simulacro: $('fecha').value, leidas
-      }, null, 1), 'omr_' + ($('operador').value.trim() || 'sin-nombre') + '.json', n);
+      const t = compacto();
+      mostrarTexto(t, n + ' hoja(s) · ' + t.length + ' caracteres', n);
     };
     $('btnCerrarCopiar').onclick = () => { $('copiar').style.display = 'none'; };
     $('btnCopiarPortapapeles').onclick = async () => {
