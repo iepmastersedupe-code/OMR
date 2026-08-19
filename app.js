@@ -129,8 +129,14 @@ const App = (() => {
     }
     if (r.ambiguas > 0) {
       dibujarGuia(r.esquinas, esc, false);
-      pintarEstado('aviso', r.ambiguas + ' pregunta(s) con dos marcas',
-        'Hoja ' + r.codigo + ' — apartar para revisar a mano');
+      // Decir CUALES: sin el numero de pregunta, el operador tiene que revisar
+      // las 80 a ojo. Con el numero, mira una y sigue.
+      const lista = (r.dudosas || []).sort((a, b) => a - b);
+      const cuales = lista.slice(0, 4).join(', ') + (lista.length > 4 ? '…' : '');
+      pintarEstado('aviso',
+        'Revisar pregunta' + (r.ambiguas > 1 ? 's ' : ' ') + cuales,
+        'Hoja ' + r.codigo + ' — hay dos marcas en ' +
+        (r.ambiguas > 1 ? 'esas preguntas' : 'esa pregunta'));
       return;
     }
     if (r.blancos > 0.6 * nq) {
