@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Lector de cartillas — MASTER'S</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icono.svg">
+<meta name="theme-color" content="#0f172a">
+<style>
+  :root { --ok:#16a34a; --aviso:#f59e0b; --busca:#475569; --rep:#0284c7; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent }
+  body { margin:0; font:16px/1.4 system-ui,sans-serif; background:#0f172a; color:#e2e8f0 }
+  header { padding:10px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap }
+  header h1 { font-size:16px; margin:0; flex:1 }
+  select, input, button { font:inherit; border-radius:8px; border:1px solid #334155;
+    background:#1e293b; color:#e2e8f0; padding:7px 10px }
+  button { background:#334155; cursor:pointer }
+  button:active { background:#475569 }
+  #vista { position:relative; background:#000; aspect-ratio:3/4; overflow:hidden }
+  #video, #overlay { position:absolute; inset:0; width:100%; height:100% }
+  #video { object-fit:cover }
+  #btnIniciar { position:absolute; inset:auto 0 0 0; margin:auto auto 24px; display:block;
+    background:var(--ok); color:#fff; border:0; padding:14px 28px; font-size:18px }
+  .estado { padding:14px; text-align:center; transition:background .12s }
+  .estado.buscando { background:var(--busca) }
+  .estado.ok       { background:var(--ok) }
+  .estado.aviso    { background:var(--aviso); color:#3b2600 }
+  .estado.repetida { background:var(--rep) }
+  #titulo { font-size:22px; font-weight:700 }
+  #detalle { font-size:14px; opacity:.9; min-height:20px }
+  #progreso { height:8px; background:#1e293b }
+  #barra { height:100%; width:0; background:var(--ok); transition:width .3s }
+  footer { padding:12px 14px; display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  #contador { font-size:20px; font-weight:700; flex:1 }
+  .peq { font-size:13px; color:#94a3b8; padding:0 14px 16px }
+</style>
+
+<header>
+  <h1>Lector de cartillas</h1>
+  <select id="nq" title="Tipo de cartilla">
+    <option value="80">80 preg · 4to y 5to</option>
+    <option value="40">40 preg · 1ro a 3ro</option>
+  </select>
+  <input id="operador" placeholder="Tu nombre" size="9">
+  <input id="fecha" type="date" title="Fecha del simulacro">
+</header>
+
+<div id="vista">
+  <video id="video" playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <button id="btnIniciar">Encender cámara</button>
+</div>
+
+<div id="estado" class="estado buscando">
+  <div id="titulo">Listo para empezar</div>
+  <div id="detalle">Apunta la cámara a la cartilla</div>
+</div>
+<div id="progreso"><div id="barra"></div></div>
+
+<footer>
+  <span id="contador">0 de 148</span>
+  <button id="btnFaltan">¿Cuáles faltan?</button>
+  <button id="btnExportar">Enviar lo leído</button>
+  <button id="btnBorrar">Borrar</button>
+</footer>
+
+<p class="peq">
+  Desliza las cartillas una por una bajo la cámara. Cuando suene, esa hoja ya quedó
+  guardada y puedes pasar la siguiente. Si sale <b>naranja</b>, aparta esa hoja para
+  revisarla. Al terminar, pulsa <b>Enviar lo leído</b>.
+  Lo leído se guarda en el teléfono: si se cierra por error, no se pierde.
+</p>
+
+<script src="geo.js"></script>
+<script src="omr.js"></script>
+<script src="app.js"></script>
+<script>App.init();</script>
+</html>
