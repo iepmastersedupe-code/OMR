@@ -54,18 +54,39 @@ const App = (() => {
     $('barra').style.width = Math.min(100, 100 * n / esperados) + '%';
   }
 
+  /* El overlay se dibuja encima del <video>, que va con object-fit:contain.
+     Hay que pasar de coordenadas del CUADRO ANALIZADO a pixeles de pantalla:
+     primero se deshace la reduccion de analisis (÷esc) y luego se aplica la
+     escala y el centrado con que el navegador encaja el video en su caja.
+     Sin esto el recuadro salia disparado fuera de la pantalla. */
+  function ajustarOverlay() {
+    const o = $('overlay'), v = $('vista');
+    const w = v.clientWidth, h = v.clientHeight;
+    if (o.width !== w || o.height !== h) { o.width = w; o.height = h; }
+    const vw = video.videoWidth || w, vh = video.videoHeight || h;
+    const s = Math.min(w / vw, h / vh);          // 'contain'
+    return { s, dx: (w - vw * s) / 2, dy: (h - vh * s) / 2 };
+  }
+
   function dibujarGuia(esquinas, esc, ok) {
     const o = $('overlay'), c = o.getContext('2d');
+    const m = ajustarOverlay();
     c.clearRect(0, 0, o.width, o.height);
     if (!esquinas) return;
+    const pt = p => [m.dx + (p[0] / esc) * m.s, m.dy + (p[1] / esc) * m.s];
     c.strokeStyle = ok ? '#16a34a' : '#f59e0b';
-    c.lineWidth = 5;
+    c.lineWidth = 4;
     c.beginPath();
     esquinas.forEach((p, i) => {
-      const x = p[0] / esc, y = p[1] / esc;
-      i ? c.lineTo(x, y) : c.moveTo(x, y);
+      const q = pt(p);
+      i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]);
     });
     c.closePath(); c.stroke();
+    c.fillStyle = c.strokeStyle;                 // las 4 esquinas detectadas
+    esquinas.forEach(p => {
+      const q = pt(p);
+      c.beginPath(); c.arc(q[0], q[1], 7, 0, 7); c.fill();
+    });
   }
 
   // ---- el ciclo: un cuadro, un intento ----
@@ -86,10 +107,6 @@ const App = (() => {
   }
 
   function evaluar(r, esc) {
-    const o = $('overlay');
-    if (o.width !== $('vista').clientWidth) {
-      o.width = $('vista').clientWidth; o.height = $('vista').clientHeight;
-    }
     if (!r) {
       dibujarGuia(null);
       pintarEstado('buscando', 'Buscando la hoja…',
