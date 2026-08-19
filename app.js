@@ -148,6 +148,12 @@ const App = (() => {
         'Que entren las 4 esquinas negras y no haya sombra encima');
       return;
     }
+    if (r.girada) {
+      dibujarGuia(r.esquinas, esc, false);
+      pintarEstado('aviso', 'Gira la hoja',
+        'La cartilla va vertical, con el título arriba');
+      return;
+    }
     const ahora = Date.now();
 
     if (r.codigo.indexOf('?') >= 0) {

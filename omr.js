@@ -188,6 +188,14 @@ const OMR = (() => {
       const area = Math.abs((m[0][0] * (m[1][1] - m[3][1]) + m[1][0] * (m[2][1] - m[0][1]) +
         m[2][0] * (m[3][1] - m[1][1]) + m[3][0] * (m[0][1] - m[2][1])) / 2);
       if (area < 0.15 * w * h) continue;
+
+      /* La cartilla es VERTICAL. Si el cuadrilatero sale mas ancho que alto,
+         la hoja esta de lado: las 4 marcas se detectan igual y la homografia
+         "funciona", pero mapea la pregunta 1 donde no es y lo lee todo
+         transpuesto. Antes se aceptaba en silencio; ahora se avisa. */
+      const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (dist(m[0], m[1]) > dist(m[0], m[3]) * 1.05)
+        return { girada: true, esquinas: m };
       const H = homografia(G.markers, m);
       if (!H) continue;
       // Verificacion final: las 4 marcas deben estar donde dice la geometria.
