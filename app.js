@@ -11,6 +11,7 @@ const App = (() => {
   const ANCHO_PROCESO = 800;          // mas resolucion = lectura mas estable
   const RANGO = [1001, 1148];
   const REPETIR_MS = 2500;            // no volver a contar la misma hoja seguida
+  const MAX_DUDOSAS = 6;              // hasta aqui se captura y se anota cuales
 
   let nq = 80, video, lienzo, ctx, corriendo = false;
   let ultimoCodigo = null, ultimoT = 0;
@@ -169,16 +170,17 @@ const App = (() => {
         'Los códigos van del ' + RANGO[0] + ' al ' + RANGO[1]);
       return;
     }
-    if (r.ambiguas > 0) {
+    /* Antes, UNA pregunta con dos marcas tiraba la hoja entera. Con 80
+       preguntas y 148 alumnos por semana eso significa perder hojas enteras por
+       un borron. Ahora se guarda lo que SI esta claro y se anota exactamente
+       que preguntas hay que mirar: no se adivina ninguna, pero tampoco se
+       descarta el trabajo de las otras 79. Solo se rechaza si hay tantas que la
+       lectura entera es sospechosa. */
+    const lista = (r.dudosas || []).sort((a, b) => a - b);
+    if (r.ambiguas > MAX_DUDOSAS) {
       dibujarGuia(r.esquinas, esc, false, r);
-      // Decir CUALES: sin el numero de pregunta, el operador tiene que revisar
-      // las 80 a ojo. Con el numero, mira una y sigue.
-      const lista = (r.dudosas || []).sort((a, b) => a - b);
-      const cuales = lista.slice(0, 4).join(', ') + (lista.length > 4 ? '…' : '');
-      pintarEstado('aviso',
-        'Revisar pregunta' + (r.ambiguas > 1 ? 's ' : ' ') + cuales,
-        'Hoja ' + r.codigo + ' — hay dos marcas en ' +
-        (r.ambiguas > 1 ? 'esas preguntas' : 'esa pregunta'));
+      pintarEstado('aviso', r.ambiguas + ' preguntas con dos marcas',
+        'Demasiadas — revisar la hoja ' + r.codigo + ' a mano');
       return;
     }
     /* Este control existe para cazar la hoja que NO se leyo (marca muy floja o
@@ -206,15 +208,23 @@ const App = (() => {
     leidas[r.codigo] = {
       respuestas: r.answers,
       blancos: r.blancos,
+      dudosas: lista,
       hora: new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
     };
     guardar();
     ultimoCodigo = r.codigo; ultimoT = ahora;
-    dibujarGuia(r.esquinas, esc, true, r);
-    pintarEstado('ok', r.codigo + ' ✓',
-      (nq - r.blancos) + ' respuestas · ' + r.blancos + ' en blanco');
+    dibujarGuia(r.esquinas, esc, lista.length === 0, r);
+    if (lista.length) {
+      pintarEstado('aviso', r.codigo + ' guardada · revisar ' +
+        (lista.length > 1 ? 'preguntas ' : 'pregunta ') +
+        lista.slice(0, 4).join(', ') + (lista.length > 4 ? '…' : ''),
+        'Se guardó el resto. Aparta la hoja para mirar esas.');
+    } else {
+      pintarEstado('ok', r.codigo + ' ✓',
+        (nq - r.blancos) + ' respuestas · ' + r.blancos + ' en blanco');
+    }
     pintarContador();
-    pitar(true);
+    pitar(lista.length === 0);
   }
 
   // ---- exportar ----
