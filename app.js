@@ -51,6 +51,7 @@ const App = (() => {
   function pintarContador() {
     const n = Object.keys(leidas).length;
     $('contador').textContent = n + ' de ' + esperados;
+    $('btnExportar').textContent = n ? 'Enviar lo leído (' + n + ')' : 'Enviar lo leído';
     $('barra').style.width = Math.min(100, 100 * n / esperados) + '%';
   }
 
@@ -217,10 +218,13 @@ const App = (() => {
   }
 
   // ---- exportar ----
+  /* Tres caminos, en orden, y cada uno protegido: compartir por el menu de
+     Android, descargar como archivo, y si las dos fallan, mostrar el texto en
+     pantalla para copiarlo. El boton nunca puede quedarse sin hacer nada:
+     si el operador pulsa y no pasa nada, da el trabajo por perdido. */
   function exportar() {
     const n = Object.keys(leidas).length;
     if (!n) {
-      // Sin esto se manda un archivo vacio y el error aparece recien en la PC.
       pintarEstado('aviso', 'Todavía no hay nada leído',
         'Pasa una cartilla hasta que suene y vuelve a intentarlo');
       return;
@@ -235,20 +239,44 @@ const App = (() => {
     const txt = JSON.stringify(cuerpo, null, 1);
     const nombre = 'omr_' + ($('operador').value.trim() || 'sin-nombre') + '_' +
       ($('fecha').value || 'sin-fecha') + '.json';
-    if (navigator.share && navigator.canShare &&
-        navigator.canShare({ files: [new File([txt], nombre, { type: 'application/json' })] })) {
-      navigator.share({ files: [new File([txt], nombre, { type: 'application/json' })],
-                        title: nombre })
-        .then(() => pintarEstado('repetida', 'Enviado: ' + n + ' hoja(s)',
-                                 nombre))
-        .catch(() => { /* el usuario canceló: no es un error */ });
+
+    // 1) menú de compartir de Android
+    try {
+      const arch = new File([txt], nombre, { type: 'application/json' });
+      if (navigator.canShare && navigator.canShare({ files: [arch] })) {
+        navigator.share({ files: [arch], title: nombre })
+          .then(() => pintarEstado('repetida', 'Enviado · ' + n + ' hoja(s)', nombre))
+          .catch(() => pintarEstado('aviso', 'No se envió',
+            'Usa «Ver y copiar» para sacar los datos'));
+        return;
+      }
+    } catch (e) { /* sin compartir: se prueba con descarga */ }
+
+    // 2) descarga normal
+    try {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([txt], { type: 'application/json' }));
+      a.download = nombre;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      pintarEstado('repetida', 'Descargado · ' + n + ' hoja(s)',
+        nombre + ' — está en la carpeta Descargas');
       return;
-    }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([txt], { type: 'application/json' }));
-    a.download = nombre; a.click();
-    pintarEstado('repetida', 'Descargado: ' + nombre,
-      n + ' hoja(s) · búscalo en la carpeta Descargas del teléfono');
+    } catch (e) { /* ultimo recurso */ }
+
+    // 3) a la vista, para copiar y pegar
+    mostrarTexto(txt, nombre, n);
+  }
+
+  /* Red de seguridad: el JSON en pantalla, seleccionable. Con esto los datos
+     salen del telefono aunque el navegador bloquee compartir y descargar. */
+  function mostrarTexto(txt, nombre, n) {
+    const caja = $('copiar');
+    $('copiarTexto').value = txt;
+    $('copiarTitulo').textContent = nombre + ' · ' + n + ' hoja(s)';
+    caja.style.display = 'flex';
+    $('copiarTexto').select();
   }
 
   function faltantes() {
@@ -315,6 +343,22 @@ const App = (() => {
     $('fecha').value = new Date().toISOString().slice(0, 10);
     $('btnIniciar').onclick = iniciar;
     $('btnExportar').onclick = exportar;
+    $('btnVer').onclick = () => {
+      const n = Object.keys(leidas).length;
+      if (!n) { pintarEstado('aviso', 'Todavía no hay nada leído', ''); return; }
+      mostrarTexto(JSON.stringify({
+        generado: new Date().toISOString(), preguntas: nq,
+        operador: $('operador').value.trim(),
+        fecha_simulacro: $('fecha').value, leidas
+      }, null, 1), 'omr_' + ($('operador').value.trim() || 'sin-nombre') + '.json', n);
+    };
+    $('btnCerrarCopiar').onclick = () => { $('copiar').style.display = 'none'; };
+    $('btnCopiarPortapapeles').onclick = async () => {
+      const t = $('copiarTexto');
+      t.select();
+      try { await navigator.clipboard.writeText(t.value); $('copiarTitulo').textContent = 'Copiado ✓'; }
+      catch (e) { document.execCommand('copy'); $('copiarTitulo').textContent = 'Copiado ✓'; }
+    };
     $('btnFaltan').onclick = () => {
       const f = faltantes();
       alert(f.length ? 'Faltan ' + f.length + ' hojas:\n' + f.join(', ')
