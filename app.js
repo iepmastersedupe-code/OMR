@@ -180,10 +180,16 @@ const App = (() => {
         (r.ambiguas > 1 ? 'esas preguntas' : 'esa pregunta'));
       return;
     }
-    if (r.blancos > 0.6 * nq) {
+    /* Este control existe para cazar la hoja que NO se leyo (marca muy floja o
+       poca luz), que saldria con nota cero sin que nadie se entere. Estaba en
+       el 60 % y rechazaba hojas legitimas: un alumno que contesta 30 de 80 deja
+       el 62 % en blanco. Con el 85 % solo salta cuando practicamente no se leyo
+       nada, que es el fallo real. Ademas el operador ya ve los puntos verdes
+       sobre la hoja, asi que tiene con que juzgar. */
+    if (r.blancos >= 0.85 * nq) {
       dibujarGuia(r.esquinas, esc, false, r);
-      pintarEstado('aviso', 'Casi toda la hoja sale en blanco',
-        'Marca muy floja o poca luz — apartar la hoja ' + r.codigo);
+      pintarEstado('aviso', 'Casi no se leyó nada',
+        r.blancos + ' de ' + nq + ' en blanco — marca muy floja o poca luz');
       return;
     }
     if (leidas[r.codigo]) {
