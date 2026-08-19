@@ -8,7 +8,7 @@
 
 const App = (() => {
   const $ = id => document.getElementById(id);
-  const ANCHO_PROCESO = 640;          // resolucion de analisis (medida: 52 ms)
+  const ANCHO_PROCESO = 800;          // mas resolucion = lectura mas estable
   const RANGO = [1001, 1148];
   const REPETIR_MS = 2500;            // no volver a contar la misma hoja seguida
 
@@ -68,7 +68,41 @@ const App = (() => {
     return { s, dx: (w - vw * s) / 2, dy: (h - vh * s) / 2 };
   }
 
-  function dibujarGuia(esquinas, esc, ok) {
+  /* Pinta sobre cada pregunta lo que el lector CREE haber visto. Es lo que
+     permite comprobar de un vistazo si esta acertando, sin tener que confiar.
+     El celular no lleva la clave del examen, asi que no puede decir "correcto"
+     o "incorrecto": solo marcada, dudosa o en blanco. */
+  function dibujarLectura(r, esc, m) {
+    if (!r || !r.H) return;
+    const c = $('overlay').getContext('2d');
+    const geo = GEO.ans[String(nq)];
+    const pt = (cx, cy) => {
+      const d = r.H[6] * cx + r.H[7] * cy + r.H[8];
+      const x = (r.H[0] * cx + r.H[1] * cy + r.H[2]) / d;
+      const y = (r.H[3] * cx + r.H[4] * cy + r.H[5]) / d;
+      return [m.dx + (x / esc) * m.s, m.dy + (y / esc) * m.s];
+    };
+    for (const q in geo) {
+      const est = r.flags[q], i = r.elegidas[q];
+      if (est === 'ok') {
+        const p = pt(geo[q][i][0], geo[q][i][1]);
+        c.fillStyle = '#22c55e';                       // verde: marca clara
+        c.beginPath(); c.arc(p[0], p[1], 5, 0, 7); c.fill();
+      } else if (est === 'ambiguo') {
+        geo[q].forEach(b => {                          // rojo: las 5 de la fila
+          const p = pt(b[0], b[1]);
+          c.strokeStyle = '#ef4444'; c.lineWidth = 2.5;
+          c.beginPath(); c.arc(p[0], p[1], 6, 0, 7); c.stroke();
+        });
+      } else {
+        const p = pt(geo[q][2][0], geo[q][2][1]);      // gris: fila en blanco
+        c.fillStyle = 'rgba(255,255,255,.35)';
+        c.beginPath(); c.arc(p[0], p[1], 3, 0, 7); c.fill();
+      }
+    }
+  }
+
+  function dibujarGuia(esquinas, esc, ok, lectura) {
     const o = $('overlay'), c = o.getContext('2d');
     const m = ajustarOverlay();
     c.clearRect(0, 0, o.width, o.height);
@@ -87,6 +121,7 @@ const App = (() => {
       const q = pt(p);
       c.beginPath(); c.arc(q[0], q[1], 7, 0, 7); c.fill();
     });
+    if (lectura) dibujarLectura(lectura, esc, m);
   }
 
   // ---- el ciclo: un cuadro, un intento ----
@@ -116,19 +151,19 @@ const App = (() => {
     const ahora = Date.now();
 
     if (r.codigo.indexOf('?') >= 0) {
-      dibujarGuia(r.esquinas, esc, false);
+      dibujarGuia(r.esquinas, esc, false, r);
       pintarEstado('aviso', 'Código ilegible', 'Revisar que marcó sus 4 dígitos');
       return;
     }
     const n = parseInt(r.codigo, 10);
     if (n < RANGO[0] || n > RANGO[1]) {
-      dibujarGuia(r.esquinas, esc, false);
+      dibujarGuia(r.esquinas, esc, false, r);
       pintarEstado('aviso', 'Código ' + r.codigo + ' no existe',
         'Los códigos van del ' + RANGO[0] + ' al ' + RANGO[1]);
       return;
     }
     if (r.ambiguas > 0) {
-      dibujarGuia(r.esquinas, esc, false);
+      dibujarGuia(r.esquinas, esc, false, r);
       // Decir CUALES: sin el numero de pregunta, el operador tiene que revisar
       // las 80 a ojo. Con el numero, mira una y sigue.
       const lista = (r.dudosas || []).sort((a, b) => a - b);
@@ -140,13 +175,13 @@ const App = (() => {
       return;
     }
     if (r.blancos > 0.6 * nq) {
-      dibujarGuia(r.esquinas, esc, false);
+      dibujarGuia(r.esquinas, esc, false, r);
       pintarEstado('aviso', 'Casi toda la hoja sale en blanco',
         'Marca muy floja o poca luz — apartar la hoja ' + r.codigo);
       return;
     }
     if (leidas[r.codigo]) {
-      dibujarGuia(r.esquinas, esc, true);
+      dibujarGuia(r.esquinas, esc, true, r);
       if (r.codigo !== ultimoCodigo || ahora - ultimoT > REPETIR_MS) {
         ultimoCodigo = r.codigo; ultimoT = ahora;
         pintarEstado('repetida', 'Hoja ' + r.codigo + ' ya estaba leída',
@@ -162,7 +197,7 @@ const App = (() => {
     };
     guardar();
     ultimoCodigo = r.codigo; ultimoT = ahora;
-    dibujarGuia(r.esquinas, esc, true);
+    dibujarGuia(r.esquinas, esc, true, r);
     pintarEstado('ok', r.codigo + ' ✓',
       (nq - r.blancos) + ' respuestas · ' + r.blancos + ' en blanco');
     pintarContador();
@@ -201,16 +236,29 @@ const App = (() => {
   // ---- arranque ----
   async function iniciar() {
     try {
+      // Se pide RETRATO y la mayor resolucion que dé la camara: la cartilla es
+      // vertical, y con un flujo apaisado la hoja queda pequeña dentro del
+      // encuadre y cada burbuja se lleva muy pocos pixeles.
       const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' },
-                 width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1440 }, height: { ideal: 1920 },
+          frameRate: { ideal: 24 },
+          advanced: [{ focusMode: 'continuous' }]
+        },
         audio: false
       });
       video.srcObject = s;
       await video.play();
       corriendo = true;
       $('btnIniciar').style.display = 'none';
-      pintarEstado('buscando', 'Buscando la hoja…', '');
+      // Mostrar lo que la camara entrego de verdad: si sale muy bajo, se sabe
+      // que el problema es la camara y no el encuadre.
+      const t = s.getVideoTracks()[0].getSettings();
+      $('resol').textContent = (t.width || video.videoWidth) + '×' +
+                               (t.height || video.videoHeight);
+      pintarEstado('buscando', 'Buscando la hoja…',
+        'Acerca hasta que la hoja llene el recuadro');
       procesar();
     } catch (e) {
       pintarEstado('aviso', 'No se pudo abrir la cámara', e.message);

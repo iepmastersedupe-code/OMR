@@ -201,11 +201,13 @@ const OMR = (() => {
       const answers = {}, flags = {};
       let blancos = 0, ambiguas = 0;
       const dudosas = [];          // que preguntas concretamente
+      const elegidas = {};         // pregunta -> indice de burbuja marcada
       for (const q in G.ans) {
         const d = G.ans[q].map(c => oscuridad(g0, w, h, H, c[0], c[1], G.RM_ANS));
         const e = elegir(d, 0.33, 0.11);
         answers[q] = e[0] < 0 ? '' : G.LETTERS[e[0]];
         flags[q] = e[1];
+        elegidas[q] = e[0];
         if (e[1] === 'blanco') blancos++;
         if (e[1] === 'ambiguo') { ambiguas++; dudosas.push(+q); }
       }
@@ -216,7 +218,8 @@ const OMR = (() => {
         const e = elegir(d, 0.33, 0.10);
         codigo += e[0] < 0 ? '?' : col.labels[e[0]];
       }
-      return { codigo, answers, flags, blancos, ambiguas, dudosas, esquinas: m };
+      return { codigo, answers, flags, blancos, ambiguas, dudosas,
+               elegidas, H, esquinas: m };
     }
     return null;
   }
