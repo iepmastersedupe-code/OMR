@@ -25,20 +25,50 @@ const App = (() => {
     catch (e) { leidas = {}; }
   };
 
-  // ---- sonido: dos tonos distintos, se distinguen sin mirar la pantalla ----
-  let audio = null;
-  function pitar(ok) {
+  /* ---- sonido ----
+     Tres avisos que se distinguen POR RITMO, no por tono: el altavoz de un
+     celular casi no reproduce por debajo de 500 Hz, asi que un pitido grave
+     —que era lo que habia— practicamente no se oye. Contar pitidos funciona
+     aunque el telefono este sobre la mesa y con ruido de aula alrededor.
+
+        1 pitido  = leida y guardada, sigue
+        2 pitidos = guardada pero hay preguntas que revisar
+        3 pitidos = NO se guardo, esa hoja hay que repetirla
+
+     El de 3 es el importante: antes los rechazos eran mudos y el operador
+     seguia pasando hojas creyendo que habian entrado. */
+  let audio = null, ultimoSonido = 0, ultimoTipo = '';
+
+  const SONIDOS = {
+    ok:      { veces: 1, hz: 900, dur: 0.11, vibra: [60] },
+    revisar: { veces: 2, hz: 760, dur: 0.09, vibra: [70, 70, 70] },
+    rechazo: { veces: 3, hz: 560, dur: 0.08, vibra: [90, 70, 90, 70, 90] }
+  };
+
+  function pitar(tipo) {
+    const cfg = SONIDOS[tipo];
+    if (!cfg) return;
+    const ahora = Date.now();
+    // Un rechazo se repite en cada cuadro mientras la hoja siga delante: se
+    // deja sonar una vez y no se repite hasta que cambie el estado.
+    if (tipo === ultimoTipo && ahora - ultimoSonido < 2000) return;
+    ultimoTipo = tipo; ultimoSonido = ahora;
     try {
       audio = audio || new (window.AudioContext || window.webkitAudioContext)();
-      const o = audio.createOscillator(), g = audio.createGain();
-      o.connect(g); g.connect(audio.destination);
-      o.frequency.value = ok ? 880 : 220;
-      g.gain.setValueAtTime(0.001, audio.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.25, audio.currentTime + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + (ok ? 0.15 : 0.35));
-      o.start(); o.stop(audio.currentTime + (ok ? 0.16 : 0.36));
-      if (navigator.vibrate) navigator.vibrate(ok ? 60 : [80, 60, 80]);
-    } catch (e) { /* sin audio, se sigue viendo el color */ }
+      if (audio.state === 'suspended') audio.resume();
+      for (let i = 0; i < cfg.veces; i++) {
+        const t = audio.currentTime + i * (cfg.dur + 0.07);
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.connect(g); g.connect(audio.destination);
+        o.frequency.value = cfg.hz;
+        o.type = 'square';                       // se oye mas que la senoidal
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.3, t + 0.008);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + cfg.dur);
+        o.start(t); o.stop(t + cfg.dur + 0.01);
+      }
+      if (navigator.vibrate) navigator.vibrate(cfg.vibra);
+    } catch (e) { /* sin audio queda el color y la vibracion */ }
   }
 
   // ---- estado en pantalla ----
@@ -146,6 +176,7 @@ const App = (() => {
   function evaluar(r, esc) {
     if (!r) {
       dibujarGuia(null);
+      ultimoTipo = '';                 // hoja fuera: el proximo aviso vuelve a sonar
       pintarEstado('buscando', 'Buscando la hoja…',
         'Que entren las 4 esquinas negras y no haya sombra encima');
       return;
@@ -154,6 +185,7 @@ const App = (() => {
       dibujarGuia(r.esquinas, esc, false);
       pintarEstado('aviso', 'Gira la hoja',
         'La cartilla va vertical, con el título arriba');
+      pitar('rechazo');
       return;
     }
     const ahora = Date.now();
@@ -161,6 +193,7 @@ const App = (() => {
     if (r.codigo.indexOf('?') >= 0) {
       dibujarGuia(r.esquinas, esc, false, r);
       pintarEstado('aviso', 'Código ilegible', 'Revisar que marcó sus 4 dígitos');
+      pitar('rechazo');
       return;
     }
     const n = parseInt(r.codigo, 10);
@@ -168,6 +201,7 @@ const App = (() => {
       dibujarGuia(r.esquinas, esc, false, r);
       pintarEstado('aviso', 'Código ' + r.codigo + ' no existe',
         'Los códigos van del ' + RANGO[0] + ' al ' + RANGO[1]);
+      pitar('rechazo');
       return;
     }
     /* Antes, UNA pregunta con dos marcas tiraba la hoja entera. Con 80
@@ -181,6 +215,7 @@ const App = (() => {
       dibujarGuia(r.esquinas, esc, false, r);
       pintarEstado('aviso', r.ambiguas + ' preguntas con dos marcas',
         'Demasiadas — revisar la hoja ' + r.codigo + ' a mano');
+      pitar('rechazo');
       return;
     }
     /* Este control existe para cazar la hoja que NO se leyo (marca muy floja o
@@ -193,6 +228,7 @@ const App = (() => {
       dibujarGuia(r.esquinas, esc, false, r);
       pintarEstado('aviso', 'Casi no se leyó nada',
         r.blancos + ' de ' + nq + ' en blanco — marca muy floja o poca luz');
+      pitar('rechazo');
       return;
     }
     if (leidas[r.codigo]) {
@@ -224,7 +260,7 @@ const App = (() => {
         (nq - r.blancos) + ' respuestas · ' + r.blancos + ' en blanco');
     }
     pintarContador();
-    pitar(lista.length === 0);
+    pitar(lista.length ? 'revisar' : 'ok');
   }
 
   // ---- exportar ----
