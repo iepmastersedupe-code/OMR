@@ -168,13 +168,42 @@ const OMR = (() => {
     return n ? s / n / 255 : 0;
   }
 
-  function elegir(d, absTh, margen) {
+  /* Decide una fila de burbujas.
+
+     La oscuridad ABSOLUTA no sirve para decidir, porque depende de la luz. Con
+     la hoja bien iluminada una burbuja VACIA da 0,08 —el aro impreso y la letra
+     de dentro—; a media luz la misma burbuja vacia da 0,36, porque el papel ya
+     no es blanco. Con el umbral fijo en 0,33 que habia, a partir de cierta
+     penumbra TODAS las filas en blanco cruzaban el umbral y salian marcadas
+     como "dos marcas": la hoja se llenaba de circulos rojos. Es exactamente lo
+     que paso al probar sobre papel de noche.
+
+     Lo estable es la comparacion DENTRO de la fila: las 5 burbujas comparten
+     luz, sombra, papel e impresion. La MEDIANA de la fila es el nivel "vacia"
+     de esa fila —como mucho 1 o 2 estan marcadas— y se decide por lo que cada
+     burbuja SOBRESALE de esa mediana.
+
+     Medido sobre 60 combinaciones de luz (100 %..42 %), sombra, desenfoque,
+     motas de papel, ruido de sensor y fuerza de la marca: lo que sobresale una
+     burbuja vacia nunca paso de 0,057, y la marca mas floja aun legible
+     sobresalio 0,087. El umbral va en 0,07, entre las dos.
+
+     La segunda burbuja tampoco puede compararse con un margen fijo: a poca luz
+     todo el rango se comprime y un margen de 0,11 declaraba "dos marcas" una
+     fila con una sola. Se pide en proporcion: que la segunda no llegue a la
+     mitad de la primera. */
+  const MARCA = 0.07;        // cuanto debe sobresalir de su fila para contar
+  const SEGUNDA = 0.5;       // si la 2a llega a esta fraccion de la 1a, son dos marcas
+
+  function elegir(d) {
+    const base = d.slice().sort((a, b) => a - b)[d.length >> 1];   // nivel "vacia"
     let i0 = 0;
     for (let i = 1; i < d.length; i++) if (d[i] > d[i0]) i0 = i;
-    let seg = -1;
+    let seg = -1e9;
     for (let i = 0; i < d.length; i++) if (i !== i0 && d[i] > seg) seg = d[i];
-    if (d[i0] < absTh) return [-1, 'blanco'];
-    if (d[i0] - seg < margen) return [-1, 'ambiguo'];
+    const alto = d[i0] - base, segundo = seg - base;
+    if (alto < MARCA) return [-1, 'blanco'];
+    if (segundo > SEGUNDA * alto) return [-1, 'ambiguo'];
     return [i0, 'ok'];
   }
 
@@ -212,7 +241,7 @@ const OMR = (() => {
       const elegidas = {};         // pregunta -> indice de burbuja marcada
       for (const q in G.ans) {
         const d = G.ans[q].map(c => oscuridad(g0, w, h, H, c[0], c[1], G.RM_ANS));
-        const e = elegir(d, 0.33, 0.11);
+        const e = elegir(d);
         answers[q] = e[0] < 0 ? '' : G.LETTERS[e[0]];
         flags[q] = e[1];
         elegidas[q] = e[0];
@@ -223,7 +252,7 @@ const OMR = (() => {
       for (let k = 0; k < 4; k++) {
         const col = G.code['d' + k];
         const d = col.centers.map(c => oscuridad(g0, w, h, H, c[0], c[1], G.RM_COD));
-        const e = elegir(d, 0.33, 0.10);
+        const e = elegir(d);
         codigo += e[0] < 0 ? '?' : col.labels[e[0]];
       }
       return { codigo, answers, flags, blancos, ambiguas, dudosas,

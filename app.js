@@ -3,6 +3,11 @@
    entera y sin dudas, suena y queda guardada. No se toman fotos ni se envian
    archivos uno por uno: al final se exporta todo junto.
 
+   Una hoja NO se decide con un cuadro: se juntan varios y se vota pregunta por
+   pregunta (ver "consenso de varios cuadros"). Sobre papel el grafito brilla y
+   la misma marca sale negra en un cuadro y blanca en el siguiente. Y volver a
+   pasar una hoja ya leida la MEJORA en vez de descartarse.
+
    El telefono SOLO captura. La correccion contra la clave se hace despues en
    la computadora, para no repartir la clave del examen entre varios celulares. */
 
@@ -13,9 +18,26 @@ const App = (() => {
   const REPETIR_MS = 2500;            // no volver a contar la misma hoja seguida
   const MAX_DUDOSAS = 6;              // hasta aqui se captura y se anota cuales
 
+  /* ---- consenso de varios cuadros ----
+     Sobre PAPEL el grafito BRILLA. Segun como caiga la luz, la misma marca sale
+     negra en un cuadro y casi blanca en el siguiente: con una hoja real quieta
+     delante de la camara, un cuadro leyo 19 de 80 respuestas y otro dio 28
+     preguntas con dos marcas. Un cuadro suelto no es una lectura, es una
+     muestra.
+
+     Antes se guardaba con el PRIMER cuadro que pasaba los controles y todos los
+     siguientes se tiraban con "ya estaba leida": una hoja mal leida quedaba mal
+     para siempre y volver a pasarla no servia de nada. Ahora se juntan varios
+     cuadros de la misma hoja y se decide con todos. */
+  const CUADROS_MIN = 3;              // minimo antes de dar una hoja por leida
+  const CUADROS_MAX = 12;             // tope, ~2 s: la hoja no se queda pegada
+  const ESTABLES = 2;                 // consolidaciones seguidas iguales = ya no aporta
+  const MAX_CONTRADICE = 4;           // contradicciones que delatan un cuadro basura
+
   let nq = 80, video, lienzo, ctx, corriendo = false;
   let ultimoCodigo = null, ultimoT = 0;
-  let leidas = {};                    // codigo -> {respuestas, hora}
+  let leidas = {};                    // codigo -> {respuestas, dudosas, votos, hora}
+  let acum = null;                    // la hoja que se esta mirando ahora mismo
   let esperados = 148;
 
   // ---- persistencia: si se cierra el navegador, no se pierde el trabajo ----
@@ -24,6 +46,94 @@ const App = (() => {
     try { leidas = JSON.parse(localStorage.getItem('omr_leidas')) || {}; }
     catch (e) { leidas = {}; }
   };
+
+  const hhmm = () => new Date().toLocaleTimeString('es-PE',
+    { hour: '2-digit', minute: '2-digit' });
+  const resueltasDe = d =>
+    Object.keys(d.respuestas || {}).filter(k => d.respuestas[k]).length;
+
+  /* ---- votos: como se junta lo que vieron varios cuadros ----
+     La regla que lo hace funcionar es que UN CUADRO QUE VE LA PREGUNTA EN BLANCO
+     NO VOTA. Con el brillo del lapiz una marca real desaparece en algunos
+     cuadros, asi que "no la vi" no prueba que no este; verla, si prueba que
+     esta. El blanco final es la AUSENCIA de votos, no un voto.
+
+     Al cerrar, por pregunta:
+        sin votos              -> en blanco
+        una sola letra         -> esa letra
+        gana la doble marca    -> dudosa (se manda a revisar, no se adivina)
+        dos letras distintas   -> dudosa (la lectura se contradice a si misma)
+
+     Los votos se guardan junto con la hoja, asi que volver a pasar una hoja mal
+     leida SUMA a lo que ya habia en vez de reemplazarlo. */
+  function nuevoAcumulado(codigo) {
+    const previo = leidas[codigo], votos = {};
+    if (previo && previo.votos)
+      for (const q in previo.votos) votos[q] = Object.assign({}, previo.votos[q]);
+    return { codigo, votos, cuadros: 0, firma: '', estables: 0, descartados: 0 };
+  }
+
+  /* Cuantas preguntas lee este cuadro DISTINTAS de lo ya acumulado. Con la hoja
+     bien cuadrada esto es cero o casi; cuando sale un numero grande, lo que ha
+     fallado es la homografia —las 4 esquinas se detectaron donde no eran— y el
+     cuadro trae la rejilla corrida: respuestas de otra fila. Un cuadro asi no
+     debe votar, porque el consenso no lo detectaria: donde los demas ven blanco,
+     el blanco no vota y su respuesta inventada se quedaria sola. */
+  function contradice(r, c) {
+    let n = 0;
+    for (let q = 1; q <= nq; q++)
+      if (r.flags[q] === 'ok' && c.respuestas[q] && r.answers[q] !== c.respuestas[q]) n++;
+    return n;
+  }
+
+  function votar(r) {
+    acum.cuadros++;
+    for (const q in r.flags) {
+      if (r.flags[q] === 'blanco') continue;
+      const k = r.flags[q] === 'ambiguo' ? '?' : r.answers[q];
+      if (!k) continue;
+      const v = acum.votos[q] || (acum.votos[q] = {});
+      v[k] = (v[k] || 0) + 1;
+    }
+  }
+
+  function consolidar() {
+    const respuestas = {}, dudosas = [];
+    let blancos = 0;
+    for (let q = 1; q <= nq; q++) {
+      const v = acum.votos[q] || {};
+      const letras = Object.keys(v).filter(k => k !== '?');
+      if (!letras.length && !v['?']) { respuestas[q] = ''; blancos++; continue; }
+      letras.sort((a, b) => v[b] - v[a]);
+      // La doble marca solo cede si UNA letra se vio clara mas veces que ella.
+      if (letras.length !== 1 || (v['?'] || 0) >= v[letras[0]]) {
+        respuestas[q] = ''; dudosas.push(q); continue;
+      }
+      respuestas[q] = letras[0];
+    }
+    return { respuestas, dudosas, blancos,
+             resueltas: nq - blancos - dudosas.length };
+  }
+
+  // Firma de la lectura junta: si no cambia de un cuadro a otro, mirar mas no aporta.
+  const firmaDe = c => {
+    const dud = new Set(c.dudosas);
+    let s = '';
+    for (let q = 1; q <= nq; q++) s += dud.has(q) ? '?' : (c.respuestas[q] || '.');
+    return s;
+  };
+
+  // Traduce la lectura junta al formato que espera dibujarLectura.
+  function vistaDe(c, H) {
+    const v = { H, flags: {}, elegidas: {} }, dud = new Set(c.dudosas);
+    for (let q = 1; q <= nq; q++) {
+      if (dud.has(q)) { v.flags[q] = 'ambiguo'; v.elegidas[q] = -1; }
+      else if (c.respuestas[q]) {
+        v.flags[q] = 'ok'; v.elegidas[q] = GEO.LETTERS.indexOf(c.respuestas[q]);
+      } else { v.flags[q] = 'blanco'; v.elegidas[q] = -1; }
+    }
+    return v;
+  }
 
   /* ---- sonido ----
      Tres avisos que se distinguen POR RITMO, no por tono: el altavoz de un
@@ -204,62 +314,109 @@ const App = (() => {
       pitar('rechazo');
       return;
     }
-    /* Antes, UNA pregunta con dos marcas tiraba la hoja entera. Con 80
-       preguntas y 148 alumnos por semana eso significa perder hojas enteras por
-       un borron. Ahora se guarda lo que SI esta claro y se anota exactamente
-       que preguntas hay que mirar: no se adivina ninguna, pero tampoco se
-       descarta el trabajo de las otras 79. Solo se rechaza si hay tantas que la
-       lectura entera es sospechosa. */
-    const lista = (r.dudosas || []).sort((a, b) => a - b);
-    if (r.ambiguas > MAX_DUDOSAS) {
+
+    /* Este cuadro no decide: VOTA. El acumulado se reinicia solo cuando cambia
+       el codigo, no cuando la hoja se pierde un cuadro, para que un temblor de
+       la mano no borre lo que ya se habia visto. */
+    if (!acum || acum.codigo !== r.codigo) acum = nuevoAcumulado(r.codigo);
+    if (acum.cuadros && contradice(r, consolidar()) > MAX_CONTRADICE) {
+      /* Dos seguidos y el equivocado puede ser lo acumulado —si el cuadro malo
+         fue el primero—, asi que se tira lo de esta pasada y se empieza otra
+         vez. Lo que ya estaba guardado de la hoja no se toca. */
+      if (++acum.descartados >= 2) acum = nuevoAcumulado(r.codigo);
       dibujarGuia(r.esquinas, esc, false, r);
-      pintarEstado('aviso', r.ambiguas + ' preguntas con dos marcas',
+      pintarEstado('buscando', r.codigo + ' · no cuadra',
+        'Aparta y vuelve a acercar la hoja, entera y sin sombra');
+      return;
+    }
+    acum.descartados = 0;
+    votar(r);
+    const c = consolidar();
+    const firma = firmaDe(c);
+    acum.estables = (firma === acum.firma) ? acum.estables + 1 : 0;
+    acum.firma = firma;
+
+    /* Sobre la hoja se pinta la lectura JUNTA, no la del cuadro suelto: asi el
+       operador ve encenderse las marcas que un cuadro solo se pierde, y sigue
+       sirviendo de comprobacion de que esta leyendo la hoja correcta. */
+    dibujarGuia(r.esquinas, esc, !c.dudosas.length, vistaDe(c, r.H));
+
+    const cerrada = acum.cuadros >= CUADROS_MAX ||
+      (acum.cuadros >= CUADROS_MIN && acum.estables >= ESTABLES);
+    if (!cerrada) {
+      /* Si la hoja ya estaba guardada se dice eso y no "leyendo…": el operador
+         tiene que saber en el acto que esa hoja ya entro, aunque el lector siga
+         juntando cuadros por si esta pasada la mejora. */
+      const yaEsta = leidas[r.codigo];
+      if (!yaEsta) {
+        pintarEstado('buscando', r.codigo + ' · leyendo…',
+          c.resueltas + ' de ' + nq + ' respuestas — sostén la hoja un momento');
+      } else if (r.codigo !== ultimoCodigo || ahora - ultimoT > REPETIR_MS) {
+        ultimoCodigo = r.codigo; ultimoT = ahora;
+        pintarEstado('repetida', 'Hoja ' + r.codigo + ' ya estaba leída',
+          resueltasDe(yaEsta) + ' de ' + nq + ' respuestas · registrada a las ' +
+          yaEsta.hora);
+      }
+      return;
+    }
+
+    /* Los dos rechazos se deciden sobre la lectura JUNTA. Un cuadro con brillo
+       puede dar 28 preguntas con dos marcas y eso no significa nada si los
+       demas la leyeron limpia; antes eso tiraba la hoja entera. */
+    const lista = c.dudosas;
+    if (lista.length > MAX_DUDOSAS) {
+      pintarEstado('aviso', lista.length + ' preguntas con dos marcas',
         'Demasiadas — revisar la hoja ' + r.codigo + ' a mano');
       pitar('rechazo');
       return;
     }
-    /* Este control existe para cazar la hoja que NO se leyo (marca muy floja o
-       poca luz), que saldria con nota cero sin que nadie se entere. Estaba en
-       el 60 % y rechazaba hojas legitimas: un alumno que contesta 30 de 80 deja
-       el 62 % en blanco. Con el 85 % solo salta cuando practicamente no se leyo
-       nada, que es el fallo real. Ademas el operador ya ve los puntos verdes
-       sobre la hoja, asi que tiene con que juzgar. */
-    if (r.blancos >= 0.85 * nq) {
-      dibujarGuia(r.esquinas, esc, false, r);
+    if (c.blancos >= 0.85 * nq) {
       pintarEstado('aviso', 'Casi no se leyó nada',
-        r.blancos + ' de ' + nq + ' en blanco — marca muy floja o poca luz');
+        c.blancos + ' de ' + nq + ' en blanco — marca floja, poca luz o brillo del lápiz');
       pitar('rechazo');
       return;
     }
-    if (leidas[r.codigo]) {
-      dibujarGuia(r.esquinas, esc, true, r);
+
+    /* Si ya estaba leida y esta pasada no aporta, se avisa y no se toca nada.
+       Si aporta, se CORRIGE la que habia: es lo que arregla la hoja que quedo
+       guardada con media lectura. Nunca se pierden respuestas, porque los votos
+       viejos siguen contando. */
+    const antes = leidas[r.codigo];
+    const previas = antes ? resueltasDe(antes) : -1;
+    if (antes && c.resueltas <= previas) {
       if (r.codigo !== ultimoCodigo || ahora - ultimoT > REPETIR_MS) {
         ultimoCodigo = r.codigo; ultimoT = ahora;
         pintarEstado('repetida', 'Hoja ' + r.codigo + ' ya estaba leída',
-          'Registrada a las ' + leidas[r.codigo].hora);
+          previas + ' de ' + nq + ' respuestas · registrada a las ' + antes.hora);
       }
       return;
     }
 
     leidas[r.codigo] = {
-      respuestas: r.answers,
-      blancos: r.blancos,
+      respuestas: c.respuestas,
+      blancos: c.blancos,
       dudosas: lista,
-      hora: new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
+      votos: acum.votos,               // para que la proxima pasada sume
+      cuadros: acum.cuadros,
+      hora: antes ? antes.hora : hhmm(),
+      corregida: antes ? hhmm() : ''
     };
     guardar();
     ultimoCodigo = r.codigo; ultimoT = ahora;
-    dibujarGuia(r.esquinas, esc, lista.length === 0, r);
-    if (lista.length) {
+    pintarContador();
+
+    if (antes) {
+      pintarEstado('ok', r.codigo + ' corregida',
+        'pasó de ' + previas + ' a ' + c.resueltas + ' respuestas de ' + nq);
+    } else if (lista.length) {
       pintarEstado('aviso', r.codigo + ' guardada · revisar ' +
         (lista.length > 1 ? 'preguntas ' : 'pregunta ') +
         lista.slice(0, 4).join(', ') + (lista.length > 4 ? '…' : ''),
         'Se guardó el resto. Aparta la hoja para mirar esas.');
     } else {
       pintarEstado('ok', r.codigo + ' ✓',
-        (nq - r.blancos) + ' respuestas · ' + r.blancos + ' en blanco');
+        c.resueltas + ' respuestas · ' + c.blancos + ' en blanco');
     }
-    pintarContador();
     pitar(lista.length ? 'revisar' : 'ok');
   }
 
@@ -275,12 +432,21 @@ const App = (() => {
         'Pasa una cartilla hasta que suene y vuelve a intentarlo');
       return;
     }
+    // Los votos por cuadro se quedan en el telefono: sirven para mejorar la
+    // lectura al repasar una hoja, no para corregir en la PC.
+    const paraEnviar = {};
+    for (const k in leidas) {
+      const d = leidas[k];
+      paraEnviar[k] = { respuestas: d.respuestas, blancos: d.blancos,
+                        dudosas: d.dudosas, cuadros: d.cuadros,
+                        hora: d.hora, corregida: d.corregida || '' };
+    }
     const cuerpo = {
       generado: new Date().toISOString(),
       preguntas: nq,
       operador: $('operador').value.trim(),
       fecha_simulacro: $('fecha').value,
-      leidas
+      leidas: paraEnviar
     };
     const txt = JSON.stringify(cuerpo, null, 1);
     const nombre = 'omr_' + ($('operador').value.trim() || 'sin-nombre') + '_' +
@@ -436,12 +602,13 @@ const App = (() => {
     };
     $('btnBorrar').onclick = () => {
       if (confirm('¿Borrar las ' + Object.keys(leidas).length + ' hojas leídas?')) {
-        leidas = {}; guardar(); pintarContador();
+        leidas = {}; acum = null; guardar(); pintarContador();
         pintarEstado('buscando', 'Listo para empezar', '');
       }
     };
     $('nq').onchange = e => {
       nq = parseInt(e.target.value, 10);
+      acum = null;                     // otra geometria: los votos viejos no valen
       OMR.setGeo(Object.assign({}, GEO, { ans: GEO.ans[String(nq)] }));
     };
   }
