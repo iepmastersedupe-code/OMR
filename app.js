@@ -124,8 +124,12 @@ const App = (() => {
   };
 
   // Traduce la lectura junta al formato que espera dibujarLectura.
-  function vistaDe(c, H) {
-    const v = { H, flags: {}, elegidas: {} }, dud = new Set(c.dudosas);
+  /* La lectura JUNTA de las respuestas, en el formato que dibuja la pantalla.
+     El codigo NO se acumula —se decide en cada cuadro y es el de este cuadro el
+     que se va a usar—, asi que se arrastra tal cual para pintarlo. */
+  function vistaDe(c, r) {
+    const v = { H: r.H, codElegidas: r.codElegidas, codFlags: r.codFlags,
+                flags: {}, elegidas: {} }, dud = new Set(c.dudosas);
     for (let q = 1; q <= nq; q++) {
       if (dud.has(q)) { v.flags[q] = 'ambiguo'; v.elegidas[q] = -1; }
       else if (c.respuestas[q]) {
@@ -242,6 +246,32 @@ const App = (() => {
         c.beginPath(); c.arc(p[0], p[1], 3, 0, 7); c.fill();
       }
     }
+
+    /* Y lo mismo sobre el CODIGO, que es lo que decide DE QUIEN es la hoja: si
+       se lee mal, las 80 respuestas se le cuelgan a otro alumno. El numero ya
+       salia en el cartel, pero el cartel no dice si el verde cayo donde el
+       alumno pinto: con el codigo 1144 y el 1141 mal marcado, el cartel se ve
+       igual de convincente en los dos casos.
+
+       Una columna sin marcar o con dos marcas se pinta ENTERA, no con un punto
+       tenue como las respuestas en blanco: un digito ilegible tira la hoja
+       completa, asi que tiene que verse de un vistazo y sin buscarlo. */
+    if (!r.codFlags) return;
+    for (let k = 0; k < 4; k++) {
+      const col = GEO.code['d' + k], est = r.codFlags[k];
+      if (est === 'ok') {
+        const p = pt(col.centers[r.codElegidas[k]][0], col.centers[r.codElegidas[k]][1]);
+        c.fillStyle = '#22c55e';
+        c.beginPath(); c.arc(p[0], p[1], 4, 0, 7); c.fill();
+        continue;
+      }
+      c.strokeStyle = est === 'ambiguo' ? '#ef4444' : '#f59e0b';   // rojo dos · ámbar ninguna
+      c.lineWidth = 2;
+      col.centers.forEach(b => {
+        const p = pt(b[0], b[1]);
+        c.beginPath(); c.arc(p[0], p[1], 5, 0, 7); c.stroke();
+      });
+    }
   }
 
   function dibujarGuia(esquinas, esc, ok, lectura) {
@@ -339,7 +369,7 @@ const App = (() => {
     /* Sobre la hoja se pinta la lectura JUNTA, no la del cuadro suelto: asi el
        operador ve encenderse las marcas que un cuadro solo se pierde, y sigue
        sirviendo de comprobacion de que esta leyendo la hoja correcta. */
-    dibujarGuia(r.esquinas, esc, !c.dudosas.length, vistaDe(c, r.H));
+    dibujarGuia(r.esquinas, esc, !c.dudosas.length, vistaDe(c, r));
 
     const cerrada = acum.cuadros >= CUADROS_MAX ||
       (acum.cuadros >= CUADROS_MIN && acum.estables >= ESTABLES);

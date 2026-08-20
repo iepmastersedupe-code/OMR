@@ -289,14 +289,19 @@ const OMR = (() => {
         if (e[1] === 'ambiguo') { ambiguas++; dudosas.push(+q); }
       }
       let codigo = '';
+      // Que burbuja se eligio en cada columna, para poder DIBUJARLO sobre la
+      // hoja: el numero en el cartel dice el resultado, pero no si el verde
+      // cayo donde el alumno pinto.
+      const codElegidas = [], codFlags = [];
       for (let k = 0; k < 4; k++) {
         const col = G.code['d' + k];
         const d = col.centers.map(c => oscuridad(g0, w, h, H, c[0], c[1], G.RM_COD));
         const e = elegir(d);
         codigo += e[0] < 0 ? '?' : col.labels[e[0]];
+        codElegidas.push(e[0]); codFlags.push(e[1]);
       }
-      return { codigo, answers, flags, blancos, ambiguas, dudosas,
-               elegidas, H, esquinas: m };
+      return { codigo, codElegidas, codFlags, answers, flags, blancos, ambiguas,
+               dudosas, elegidas, H, esquinas: m };
     }
     return null;
   }
