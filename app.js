@@ -14,7 +14,25 @@
 const App = (() => {
   const $ = id => document.getElementById(id);
   const ANCHO_PROCESO = 800;          // mas resolucion = lectura mas estable
-  const RANGO = [1001, 1148];
+  /* Rango de codigos que el telefono da por posibles.
+
+     OJO CON LO QUE ESTE NUMERO NO ES: no es el padron. Estaba en [1001, 1148]
+     —los 148 alumnos de 2026— y eso convertia al lector en algo que caduca: en
+     cuanto el colegio matricula un alumno mas, su codigo es el 1149 y la app lo
+     rechaza con "no existe", en pleno simulacro y sin que el operador pueda
+     hacer nada. El padron crece y la app publicada no.
+
+     La comprobacion de verdad ya existe y esta donde debe: `unir_capturas.py`
+     contrasta cada codigo contra el padron REAL en la PC y manda a
+     `revisar_<fecha>.csv` los que no aparecen en el. Aqui solo hace falta cazar
+     un codigo disparatado en el momento, para avisar al operador mientras
+     todavia tiene la hoja en la mano. 1001-1999 deja sitio para 999 alumnos
+     —siete veces el colegio de hoy— y sigue cazando la lectura absurda.
+
+     Y tampoco protege de lo que parece: si el 1144 se lee 1044 y el 1044 existe,
+     ningun rango lo caza. De eso protegen el consenso de varios cuadros y ver
+     los puntos verdes sobre las 4 columnas del codigo. */
+  const RANGO = [1001, 1999];
   const REPETIR_MS = 2500;            // no volver a contar la misma hoja seguida
   const MAX_DUDOSAS = 6;              // hasta aqui se captura y se anota cuales
 
@@ -38,7 +56,6 @@ const App = (() => {
   let ultimoCodigo = null, ultimoT = 0;
   let leidas = {};                    // codigo -> {respuestas, dudosas, votos, hora}
   let acum = null;                    // la hoja que se esta mirando ahora mismo
-  let esperados = 148;
 
   // ---- persistencia: si se cierra el navegador, no se pierde el trabajo ----
   const guardar = () => localStorage.setItem('omr_leidas', JSON.stringify(leidas));
@@ -195,9 +212,16 @@ const App = (() => {
 
   function pintarContador() {
     const n = Object.keys(leidas).length;
-    $('contador').textContent = n + ' de ' + esperados;
+    /* El total tampoco puede estar quemado, por el mismo motivo que el rango.
+       Y el padron no serviria de nada aqui: el operador no lee los 148 de una
+       sentada, lee el fajo de un grado. Asi que lo dice el, que tiene el fajo
+       delante y lo puede contar. Si no lo pone, se ensena solo la cuenta: mas
+       vale sin barra que con una barra que miente. */
+    const total = parseInt($('hojas').value, 10) || 0;
+    $('contador').textContent = total ? n + ' de ' + total
+                                      : n + ' leída' + (n === 1 ? '' : 's');
     $('btnExportar').textContent = n ? 'Enviar lo leído (' + n + ')' : 'Enviar lo leído';
-    $('barra').style.width = Math.min(100, 100 * n / esperados) + '%';
+    $('barra').style.width = total ? Math.min(100, 100 * n / total) + '%' : '0';
   }
 
   /* El overlay se dibuja encima del <video>, que va con object-fit:contain.
@@ -548,10 +572,32 @@ const App = (() => {
     $('copiarTexto').select();
   }
 
+  /* Que hojas se saltaron. El telefono NO tiene el padron —a proposito: no
+     lleva ni nombres ni DNI—, asi que no puede decir "falta Fulano". Lo que si
+     puede es mirar los HUECOS entre el primer codigo leido y el ultimo, que es
+     la pregunta real del operador: "¿se me paso una hoja del fajo?".
+
+     Un hueco NO prueba que se saltara una hoja, y por eso no se dice asi: el
+     colegio ya declaro 11 alumnos RETIRADOS, y sus codigos quedan como huecos
+     permanentes dentro del tramo de su grado (1065, 1092 y 1100 caen dentro de
+     4to). Ademas los codigos nuevos se reparten por orden de matricula, no por
+     grado: el que entre despues del 1148 sera el 1149 sea de 1ro o de 5to, asi
+     que el tramo de cada grado deja de ser continuo con el tiempo.
+
+     Lo fiable es la CUENTA contra las hojas del fajo, que el operador cuenta a
+     mano. Los huecos van despues, como pista y avisando de que pueden ser
+     retirados. Quien lo sabe de verdad es la PC: `unir_capturas.py` compara
+     contra el padron y ya descuenta a los retirados.
+
+     Antes esto recorria el rango entero, y con el fajo de 4to ya terminado
+     contestaba "faltan 110 hojas", contando alumnos de otros grados que ni
+     siquiera estaban sobre la mesa. */
   function faltantes() {
-    const f = [];
-    for (let i = RANGO[0]; i <= RANGO[1]; i++) if (!leidas[String(i)]) f.push(i);
-    return f;
+    const cods = Object.keys(leidas).map(Number).sort((a, b) => a - b);
+    if (!cods.length) return { leidas: 0, huecos: [] };
+    const desde = cods[0], hasta = cods[cods.length - 1], huecos = [];
+    for (let i = desde; i <= hasta; i++) if (!leidas[String(i)]) huecos.push(i);
+    return { leidas: cods.length, desde, hasta, huecos };
   }
 
   // ---- arranque ----
@@ -612,6 +658,7 @@ const App = (() => {
     $('fecha').value = new Date().toISOString().slice(0, 10);
     $('btnIniciar').onclick = iniciar;
     $('btnExportar').onclick = exportar;
+    $('hojas').oninput = pintarContador;
     $('btnVer').onclick = () => {
       const n = Object.keys(leidas).length;
       if (!n) { pintarEstado('aviso', 'Todavía no hay nada leído', ''); return; }
@@ -627,8 +674,23 @@ const App = (() => {
     };
     $('btnFaltan').onclick = () => {
       const f = faltantes();
-      alert(f.length ? 'Faltan ' + f.length + ' hojas:\n' + f.join(', ')
-                     : 'Están todas las ' + esperados + '.');
+      if (!f.leidas) { alert('Todavía no has leído ninguna hoja.'); return; }
+      const total = parseInt($('hojas').value, 10) || 0;
+      let m = f.leidas + ' hoja(s) leídas, de la ' + f.desde + ' a la ' + f.hasta +
+              '.' + '\n\n';
+      // Lo fiable primero: cuantas hojas trae el fajo contra cuantas van.
+      if (total) {
+        const restan = total - f.leidas;
+        m += (restan > 0
+          ? 'Del fajo de ' + total + (restan === 1 ? ' falta 1.' : ' faltan ' + restan + '.')
+          : 'Están las ' + total + ' del fajo.') + '\n\n';
+      }
+      m += f.huecos.length
+        ? 'Códigos sin leer en ese tramo:\n' + f.huecos.join(', ') +
+          '\n\nPuede ser una hoja saltada, pero también un alumno retirado. Al ' +
+          'corregir en la computadora se sabe cuál es.'
+        : 'Ningún código sin leer en ese tramo.';
+      alert(m);
     };
     $('btnBorrar').onclick = () => {
       if (confirm('¿Borrar las ' + Object.keys(leidas).length + ' hojas leídas?')) {

@@ -50,6 +50,8 @@
   </select>
   <input id="operador" placeholder="Tu nombre" size="9">
   <input id="fecha" type="date" title="Fecha del simulacro">
+  <input id="hojas" type="number" min="1" placeholder="hojas" style="width:5.5em"
+         title="Cuántas hojas tiene el fajo (opcional, solo para la barra)">
 </header>
 
 <div id="vista">
@@ -65,7 +67,7 @@
 <div id="progreso"><div id="barra"></div></div>
 
 <footer>
-  <span id="contador">0 de 148</span>
+  <span id="contador">0 leídas</span>
   <span id="resol" style="font-size:12px;color:#64748b"></span>
   <button id="btnFaltan">¿Cuáles faltan?</button>
   <button id="btnExportar">Enviar lo leído</button>
