@@ -192,18 +192,58 @@ const OMR = (() => {
      todo el rango se comprime y un margen de 0,11 declaraba "dos marcas" una
      fila con una sola. Se pide en proporcion: que la segunda no llegue a la
      mitad de la primera. */
-  const MARCA = 0.07;        // cuanto debe sobresalir de su fila para contar
+  /* El fondo de una fila no es un NIVEL, es una RECTA.
+
+     Primero se quito el umbral absoluto (0,33) porque dependia de la luz: en
+     penumbra una burbuja vacia da 0,36 y todas las filas en blanco salian como
+     "dos marcas". Se paso a medir cuanto sobresale cada burbuja de la MEDIANA
+     de su fila. Eso arreglo la penumbra, pero sobre fotos de papel de verdad
+     aparecio el siguiente: la luz no cae plana sobre la fila, cae en degradado.
+     Con un degradado de izquierda a derecha, la burbuja del extremo es siempre
+     la mas oscura de su fila y sobresale de la mediana lo bastante para pasar
+     por marca. Por eso la basura era SIEMPRE la letra de un borde: A en la
+     columna izquierda, E en la derecha. Medido sobre 7 fotos reales de la misma
+     hoja: 39 respuestas inventadas donde el alumno no marco nada.
+
+     La solucion es quitar tambien la PENDIENTE: se ajusta una recta a la fila y
+     se mira el residuo. Un degradado lineal se anula entero; una marca sigue
+     sobresaliendo. La recta se ajusta SIN la burbuja mas oscura, porque si no
+     la propia marca tira del fondo hacia arriba y se rebaja a si misma —justo
+     en los extremos, que es donde mas leverage tiene.
+
+     Con las mismas 7 fotos: 39 invenciones -> 0, y una foto que devolvia
+     `CADA?A?A?AA?` paso a leer sus 22 marcas exactas. Lo que queda son marcas
+     no vistas (16 de 154, casi todas en las fotos malas), que es un fallo
+     recuperable: el consenso de varios cuadros las recupera y el operador ve
+     que faltan puntos verdes. Inventar una respuesta no se recupera nunca. */
+  const MARCA = 0.14;        // cuanto debe sobresalir de la recta de su fila
   const SEGUNDA = 0.5;       // si la 2a llega a esta fraccion de la 1a, son dos marcas
 
+  function residuos(d) {
+    const n = d.length;
+    let peor = 0;
+    for (let i = 1; i < n; i++) if (d[i] > d[peor]) peor = i;
+    let sx = 0, sy = 0, sxx = 0, sxy = 0, m = 0;
+    for (let i = 0; i < n; i++) {
+      if (i === peor) continue;
+      sx += i; sy += d[i]; sxx += i * i; sxy += i * d[i]; m++;
+    }
+    const den = m * sxx - sx * sx;
+    const a = den ? (m * sxy - sx * sy) / den : 0;
+    const b = (sy - a * sx) / m;
+    const o = new Array(n);
+    for (let i = 0; i < n; i++) o[i] = d[i] - (a * i + b);
+    return o;
+  }
+
   function elegir(d) {
-    const base = d.slice().sort((a, b) => a - b)[d.length >> 1];   // nivel "vacia"
+    const r = residuos(d);
     let i0 = 0;
-    for (let i = 1; i < d.length; i++) if (d[i] > d[i0]) i0 = i;
+    for (let i = 1; i < r.length; i++) if (r[i] > r[i0]) i0 = i;
     let seg = -1e9;
-    for (let i = 0; i < d.length; i++) if (i !== i0 && d[i] > seg) seg = d[i];
-    const alto = d[i0] - base, segundo = seg - base;
-    if (alto < MARCA) return [-1, 'blanco'];
-    if (segundo > SEGUNDA * alto) return [-1, 'ambiguo'];
+    for (let i = 0; i < r.length; i++) if (i !== i0 && r[i] > seg) seg = r[i];
+    if (r[i0] < MARCA) return [-1, 'blanco'];
+    if (seg > SEGUNDA * r[i0]) return [-1, 'ambiguo'];
     return [i0, 'ok'];
   }
 
